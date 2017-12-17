@@ -2,7 +2,6 @@
 
 ## The model
 
-(state, actuators, update equations)
 The model attempts to follow a polynomial with coefficients `coeffs` by calculating optimal actuator values (throttle and steer values). That is, it tries to minimze a certain cost function, which usually includes the squared values of the cross track error (CTE), orentation error, and velocity error (against a reference velocity), as well as the actuator values, and the difference between the "current" actuator values and the previous ones. All of these components can be modified by adding some weight into them. My implementation has a weight of 3 in the CTE and orientation error components, a weight of 2000 in the steer value difference component, and a weight of 10 in the throttle value difference component. 
 
 The state of the car consists of the x and y coordinates, the heading direction, and the velocity of the car, as well as the CTE and orientation error of the car. From the initial state the optimizer calculates the next state `N - 1` times using the update equations, or constraints. The constraints are somewhat approximative, because they assume a constant velocity and heading direction (exept when setting the constraint for the same state value).

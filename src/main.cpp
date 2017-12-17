@@ -16,6 +16,7 @@ using json = nlohmann::json;
 constexpr double pi() { return M_PI; }
 double deg2rad(double x) { return x * pi() / 180; }
 double rad2deg(double x) { return x * 180 / pi(); }
+const double Lf = 2.67;
 
 // Checks if the SocketIO event has JSON data.
 // If there is data the JSON object in string format will be returned,
@@ -77,7 +78,7 @@ int main() {
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
     string sdata = string(data).substr(0, length);
-    cout << sdata << endl;
+    std::cout << sdata << std::endl;
     if (sdata.size() > 2 && sdata[0] == '4' && sdata[1] == '2') {
       string s = hasData(sdata);
       if (s != "") {
@@ -85,12 +86,14 @@ int main() {
         string event = j[0].get<string>();
         if (event == "telemetry") {
           // j[1] is the data JSON object
-          vector<double> ptsx = j[1]["ptsx"];
+	  vector<double> ptsx = j[1]["ptsx"];
           vector<double> ptsy = j[1]["ptsy"];
           double px = j[1]["x"];
           double py = j[1]["y"];
           double psi = j[1]["psi"];
           double v = j[1]["speed"];
+	  double delta = j[1]["steering_angle"];
+	  double acceleration = j[1]["throttle"];
 
           /*
           * TODO: Calculate steering angle and throttle using MPC.
@@ -101,15 +104,61 @@ int main() {
           double steer_value;
           double throttle_value;
 
+	  // take latency into account
+	  double latency = 0.1;
+	  px += cos(psi) * v * latency;
+	  py += sin(psi) * v * latency;
+	  psi -= v * delta * deg2rad(25.0) / Lf * latency;
+	  v += acceleration * latency;
+
+	  int n = ptsx.size();
+    	  Eigen::VectorXd _ptsx(n);
+    	  Eigen::VectorXd _ptsy(n);
+
+	  // transform points to vehicle coordinates
+	  for (int i = 0; i < n; i++) {
+	    double ptsx1 = ptsx[i] - px;
+	    double ptsy1 = ptsy[i] - py;
+	    _ptsx(i) = ptsx1 * cos(psi) + ptsy1 * sin(psi);
+	    _ptsy(i) = -ptsx1 * sin(psi) + ptsy1 * cos(psi);
+	  }
+
+	  auto coeffs = polyfit(_ptsx, _ptsy, 3);
+
+	  double car_x = 0.0;
+	  double car_y = 0.0;
+	  double car_psi = 0.0;
+
+	  double cte = polyeval(coeffs, car_x) - car_y;
+	  double epsi = car_psi - atan(3 * coeffs[3] * car_x * car_x + 
+					   2 * coeffs[2] * car_x + 
+					   coeffs[1]);
+
+
+    	  Eigen::VectorXd state(6);
+	  state << car_x, car_y, car_psi, v, cte, epsi;
+
+	  auto vars = mpc.Solve(state, coeffs);
+	  steer_value = vars[0] / deg2rad(25.0);
+	  throttle_value = vars[1];
+
           json msgJson;
           // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
           // Otherwise the values will be in between [-deg2rad(25), deg2rad(25] instead of [-1, 1].
           msgJson["steering_angle"] = steer_value;
           msgJson["throttle"] = throttle_value;
 
+
+	  const int N = 15;
+
           //Display the MPC predicted trajectory 
           vector<double> mpc_x_vals;
           vector<double> mpc_y_vals;
+
+	  for (int i = 3; i < N; i += 2) {
+	    mpc_x_vals.push_back(vars[i + 2]);
+	    mpc_y_vals.push_back(-vars[i + 2 + N]);
+	  }
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Green line
@@ -121,12 +170,16 @@ int main() {
           vector<double> next_x_vals;
           vector<double> next_y_vals;
 
+	  for (double i = 7.0; i < 55.0; i += 3.0) {
+	    next_x_vals.push_back(i);
+	    next_y_vals.push_back(polyeval(coeffs, i));
+	  }
+
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Yellow line
 
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
-
 
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
           std::cout << msg << std::endl;
@@ -140,7 +193,7 @@ int main() {
           // NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
           // SUBMITTING.
           this_thread::sleep_for(chrono::milliseconds(100));
-          ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
+          ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT); 
         }
       } else {
         // Manual driving
